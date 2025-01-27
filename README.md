@@ -1,2 +1,3 @@
 # activation-dynamics
-Showing the effect of activation dynamics on musculoskeletal optimal control
+
+Matlab code to show the effect of activation dynamics on musculoskeletal optimal control.
