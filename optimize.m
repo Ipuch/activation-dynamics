@@ -20,7 +20,6 @@ function optimize()
         optimizer = 'fmincon';
     end
 
-
     N = 200;     % number of collocation points
     T = 1.0;     % duration
     times = linspace(0,T,N);
@@ -129,8 +128,8 @@ function optimize()
     name = sprintf('%.0f Hz control input, %.3f duty cycle', f, dutycycle);
     fprintf('doing simulation with %s...\n', name);
 
-    % simulate for about 5 seconds, to make sure there is no effect of startup transient
-    duration = 5.0;
+    % simulate for about 1 second, long enough that there is no effect of initial conditions
+    duration = 1.0;
     ncycles = round(duration * f);
     aa = 0;  % initial activation state
     tt = 0;  % initial time value
@@ -156,12 +155,12 @@ function optimize()
         aa = [aa ; a]; 
         uu = [uu ; zeros(size(a))];       
     end
+    duration = tt(end);  % this is the actual duration of the simulation
 
     % plot u(t) and a(t) for the final 10 periods
     figure()
     plot(tt,[uu aa]);
     xlabel('time (s)')
-    duration = tt(end);
     tstart = max(0,duration-10*period);
     xlim([tstart duration])
     ylim([-0.2 1.2])
@@ -355,7 +354,6 @@ function [xdot, dxdot_dx, dxdot_du] = odefun(x,u)
     Tdeact = problem.Tdeact;
 
     % activation dynamics model from McLean et al., J Biomech Eng 2003
-    % or a modified version
     xdot = (u/Tact + (1-u)/Tdeact) .* (u - x);
 
     if (nargout > 1)
