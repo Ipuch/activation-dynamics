@@ -110,9 +110,9 @@ function optimize()
 
     % report the means, exclude the last point which is the start of the next cycle
     fprintf('Result of trajectory optimization:\n')
-    fprintf('    mean control:         %7.4f\n', mean(u(1:end-1)));
-    fprintf('    mean control-squared: %7.4f\n', mean(u(1:end-1).^2));
-    fprintf('    mean activation:      %7.4f\n', mean(x(1:end-1)));
+    fprintf('    mean control:         %10.7f\n', mean(u(1:end-1)));
+    fprintf('    mean control-squared: %10.7f\n', mean(u(1:end-1).^2));
+    fprintf('    mean activation:      %10.7f\n', mean(x(1:end-1)));
    
     % plot the optimal solution
     figure()
@@ -180,9 +180,9 @@ function optimize()
 
     % report the means
     fprintf('Simulation result for %s\n', name)
-    fprintf('    mean control:         %7.4f\n', mean_u)
-    fprintf('    mean control-squared: %7.4f\n', mean_usquared)
-    fprintf('    mean activation:      %7.4f\n', mean_a)
+    fprintf('    mean control:         %10.7f\n', mean_u)
+    fprintf('    mean control-squared: %10.7f\n', mean_usquared)
+    fprintf('    mean activation:      %10.7f\n', mean_a)
 
     % compare to the task requirement and the trajectory optimization solution
     if (abs(mean_a-0.5) > 1e-4)
