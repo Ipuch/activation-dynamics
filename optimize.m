@@ -1,18 +1,29 @@
-function optimize()
+function [p] = optimize(model, output)
 % Find the excitation signal that generates a mean muscle activation of 0.5,
 % with minimal effort (defined as mean squared excitation).
-% A direct collocation method is used.
+% Two methods are used:
+% (1) direct collocation
+% (2) direct shooting, with square wave input parameters p = [umin,umax,duty_cycle]
 
     global problem
-    close all
     rng(0)
 
+    % default inputs
+    if (nargin < 1)
+        model = 'McLean2003';
+    end
+    if (nargin < 2)
+        output = true;
+    end
+
+
     % set some model parameters
+    problem.model = model;
     problem.Tact   = 0.015;
     problem.Tdeact = 0.060;
 
-    % options
-    optimizer = 'ipopt';  % 'ipopt', 'fmincon', or 'none' to skip optimizing
+    % options for the trajectory optimization
+    optimizer = 'ipopt';  % choose 'ipopt', 'fmincon', or 'none' to skip optimizing
     
     % if ipopt was selected, but not installed, use fmincon instead
     if strcmp(optimizer,'ipopt') && isempty(which('ipopt'))
@@ -46,35 +57,42 @@ function optimize()
         % add any nonzeros
         problem.Jpattern = double(problem.Jpattern | J~=0);
         % the following print can confirm that we had exactly the same NNZ number each time
-        fprintf('nnz(Jpattern): %d\n', nnz(problem.Jpattern));
+        if (output)
+            fprintf('nnz(Jpattern): %d\n', nnz(problem.Jpattern));
+        end
     end
 
     % check the derivatives
-    f = objfun(X);
-    g = objgrad(X);
-    c = confun(X);
-    J = conjac(X);
-    gnum = zeros(size(g));
-    Jnum = zeros(size(J));
-    hh = 1e-7;
-    for i = 1:nX
-        tmp = X(i);
-        X(i) = X(i) + hh;
-        fhh = objfun(X);
-        gnum(i) = (fhh-f)/hh;
-        chh = confun(X);
-        Jnum(:,i) = (chh-c)/hh;
-        X(i) = tmp;
+    if (output)
+        f = objfun(X);
+        g = objgrad(X);
+        c = confun(X);
+        J = conjac(X);
+        gnum = zeros(size(g));
+        Jnum = zeros(size(J));
+        hh = 1e-7;
+        for i = 1:nX
+            tmp = X(i);
+            X(i) = X(i) + hh;
+            fhh = objfun(X);
+            gnum(i) = (fhh-f)/hh;
+            chh = confun(X);
+            Jnum(:,i) = (chh-c)/hh;
+            X(i) = tmp;
+        end
+        [maxerr,row] = max(abs(g-gnum));
+        fprintf("largest error in gradient is %f et %d (%f coded vs %f numerical)\n", ...
+            maxerr,row,g(row),gnum(row));
+        [~,col] = max(max(abs(J-Jnum)));
+        [maxerr,row] = max(max(abs(J'-Jnum')));
+        fprintf("largest error in Jacobian is %f at %d,%d (%f coded vs %f numerical)\n", ...
+            full(maxerr),row,col,full(J(row,col)),full(Jnum(row,col)));
+        disp('Hit ENTER to continue');
+        pause
     end
-    [maxerr,row] = max(abs(g-gnum));
-    fprintf("largest error in gradient is %f et %d (%f coded vs %f numerical)\n", ...
-        maxerr,row,g(row),gnum(row));
-    [~,col] = max(max(abs(J-Jnum)));
-    [maxerr,row] = max(max(abs(J'-Jnum')));
-    fprintf("largest error in Jacobian is %f at %d,%d (%f coded vs %f numerical)\n", ...
-        full(maxerr),row,col,full(J(row,col)),full(Jnum(row,col)));
 
     % solve with ipopt, if installed, otherwise use fmincon
+    fprintf('Solving %s with collocation...\n', model)
     if strcmp(optimizer,'ipopt')
         % solve with IPOPT
         funcs.objective   = @objfun;
@@ -88,108 +106,163 @@ function optimize()
         options.ub = ub;
 	    options.ipopt.hessian_approximation = 'limited-memory'; 
         options.ipopt.max_iter = 100000;
+        if ~output
+            options.ipopt.print_level = 0;
+        end
         [X, info] = ipopt(X,funcs,options);
     elseif strcmp(optimizer,'fmincon')
         % solve with fmincon
+        if output
+            print_level = 'iter';
+        else
+            print_level = 'none';
+        end
         options = optimoptions('fmincon','ConstraintTolerance',1e-10, ...
                                          'OptimalityTolerance',1e-10, ...
                                          'MaxFunctionEvaluations',100000, ...
                                          'MaxIterations',10000, ...
                                          'SpecifyObjectiveGradient',true, ...
                                          'SpecifyConstraintGradient',true, ...
-                                         'Display','iter');
+                                         'Display',print_level);
         X = fmincon(@obj_fmincon,X,[],[],[],[],lb,ub,@con_fmincon,options);
     end
-    objOptimized = objfun(X);
-    fprintf('objfun: %8.4f\n', objOptimized);
 
     % extract u(t) and x(t)
     u = X(problem.iu);
     x = X(problem.ix);
 
     % report the means, exclude the last point which is the start of the next cycle
-    fprintf('Result of trajectory optimization:\n')
-    fprintf('    mean control:         %10.7f\n', mean(u(1:end-1)));
     fprintf('    mean control-squared: %10.7f\n', mean(u(1:end-1).^2));
     fprintf('    mean activation:      %10.7f\n', mean(x(1:end-1)));
    
     % plot the optimal solution
     figure()
+    set(gcf, 'Position', [387 573 853 305]);
+    subplot(1,2,1)
     plot(times,[u x]);
     ylim([-0.2 1.2])
     xlabel('time (s)')
     legend('excitation','activation')
-    title('optimal control solution')
+    title([problem.model ' collocation'])
+    drawnow;
 
-    % run a simulation with a hypothesized solution
-    f = 1000;  % frequency (Hz) of the square wave
+    % now solve the problem with a shooting method, and a parameterized
+    % control input u(t): p = [umin,umax,dutycycle]
+    fprintf('Solving %s with shooting...\n', model)
+
+    % initial guess, and bounds, for the 3 parameters
+    p = [0.1 ; 0.9; 0.5];  % umin, umax, dutycycle
+    lb = zeros(3,1);
+    ub = ones(3,1);
+
+    % solve with fmincon
+    if output
+        print_level = 'iter';
+    else
+        print_level = 'none';
+    end
+    options = optimoptions('fmincon','ConstraintTolerance',1e-10, ...
+                                     'OptimalityTolerance',1e-10, ...
+                                     'MaxFunctionEvaluations',100000, ...
+                                     'MaxIterations',10000, ...
+                                     'Display',print_level);
+    p = fmincon(@obj_shooting,p,[],[],[],[],lb,ub,@con_shooting,options);
+    report = true;
+    subplot(1,2,2);
+    con_shooting(p,report);
+end
+%==================================================================================
+function f = obj_shooting(p)
+% evaluate the cost of the control u(t) with parameters p
+
+    % extract parameters
+    umin = p(1);
+    umax = p(2);
+    duty_cycle = p(3);
+
+    % cost is the integral of u(t)^2
+    f = duty_cycle*umax^2 + (1-duty_cycle)*umin^2;
+end
+%==================================================================================
+function [c,ceq] = con_shooting(p, report)
+% evaluate the task performance of control u(t) with parameters p
+
+    global problem
+
+    % by default, don't report any results
+    if nargin < 2
+        report = false;
+    end
+
+    % extract parameters
+    umin = p(1);
+    umax = p(2);
+    duty_cycle = p(3);
+
+    % inequality constraint: umox > umin
+    c = umin - umax;  
+
+    % then we need to satisfy an equality constraint: mean activation is 0.5
+    % this is done by simulating the response
+
+    % choose a very high square wave frequency (1000 Hz is good)
+    f = 1000;  
     period = 1/f;
-    dutycycle = 0.2; % this duty cycle will produce a mean activation of exactly 0.5 with the McLean2003 model
-    name = sprintf('%.0f Hz control input, %.3f duty cycle', f, dutycycle);
 
     % simulate for about 1 second, long enough that there is no effect of initial conditions
     duration = 1.0;
     ncycles = round(duration * f);
-    aa = 0;  % initial activation state
+    xx = 0;  % initial activation state
     tt = 0;  % initial time value
     uu = 0;  % initial excitation input
     for i = 1:ncycles
-        % simulate the activation phase of the cycle, with control input 1
-        dur = dutycycle * period; % duration of this phase
-        [t,a] = ode45(@(t,x) odefun(x,1), [0 dur], aa(end));
-        % append results to the tt,aa,uu vectors
+        % simulate the activation phase of the cycle, with control input umax
+        dur = duty_cycle * period; % duration of this phase
+        [t,x] = ode45(@(t,x) odefun(x,umax), [0 dur], xx(end));
+        % append results to the tt,xx,uu vectors
         % add a tiny amount to the first time value, otherwise interp1 (later) will complain about duplicate time points
         t(1) = t(1) + 1e-10;
         tt = [tt ; tt(end) + t];
-        aa = [aa ; a]; 
-        uu = [uu ; ones(size(a))];
+        xx = [xx ; x]; 
+        uu = [uu ; umax*ones(size(t))];
 
-        % simulate the deactivation phase of the cycle, with control input 0
-        dur = (1 - dutycycle) * period; % duration of this phase
-        [t,a] = ode45(@(t,x) odefun(x,0), [0 dur], aa(end));
-        % append results to the tt,aa,uu vectors
+        % simulate the deactivation phase of the cycle, with control input umin
+        dur = (1 - duty_cycle) * period; % duration of this phase
+        [t,x] = ode45(@(t,x) odefun(x,umin), [0 dur], x(end));
+        % append results to the tt,xx,uu vectors
         % add a tiny amount to the first time value, otherwise interp1 (later) will complain about duplicate time points
         t(1) = t(1) + 1e-10;
         tt = [tt ; tt(end) + t];
-        aa = [aa ; a]; 
-        uu = [uu ; zeros(size(a))];       
+        xx = [xx ; x]; 
+        uu = [uu ; umin*ones(size(t))];
     end
     duration = tt(end);  % this is the actual duration of the simulation
-
-    % plot u(t) and a(t) for the final 10 periods
-    figure()
-    plot(tt,[uu aa]);
-    xlabel('time (s)')
-    tstart = max(0,duration-10*period);
-    xlim([tstart duration])
-    ylim([-0.2 1.2])
-    title(name);
-    legend('excitation','activation')
 
     % resample and calculate the means over the final cycle
     npoints = 1001;
     tnew = linspace(duration-period, duration, npoints);
     u = interp1(tt,uu,tnew);
-    a = interp1(tt,aa,tnew);
+    x = interp1(tt,xx,tnew);
     % exclude the last resampled point from the averages, since it's the start of the next cycle
     mean_u = mean(u(1:end-1));
     mean_usquared = mean(u(1:end-1).^2);
-    mean_a = mean(a(1:end-1));
+    mean_x = mean(x(1:end-1));
+    % compare to the task requirement: mean activation is 0.5
+    ceq = mean_x - 0.5;
 
-    % report the means
-    fprintf('Simulation result for %s\n', name)
-    fprintf('    mean control:         %10.7f\n', mean_u)
-    fprintf('    mean control-squared: %10.7f\n', mean_usquared)
-    fprintf('    mean activation:      %10.7f\n', mean_a)
-
-    % compare to the task requirement and the trajectory optimization solution
-    if (abs(mean_a-0.5) > 1e-4)
-        fprintf('This solution did NOT achieve a mean activation of 0.5\n')
-    end
-    if (mean_usquared < objOptimized)
-        fprintf('This solution has a LOWER cost than what the trajectory optimization found!\n')
-    else
-        fprintf('This solution has a HIGHER cost than what the trajectory optimization found!\n')
+    if (report)
+        fprintf('    mean control-squared: %10.7f\n', mean_usquared)
+        fprintf('    mean activation:      %10.7f\n', mean_x)
+    
+        % plot u(t) and a(t) for the final 10 simulated periods
+        plot(tt,[uu xx]);
+        xlabel('time (s)')
+        tstart = max(0,duration-10*period);
+        xlim([tstart duration])
+        ylim([-0.2 1.2])
+        title([problem.model ' shooting']);
+        legend('excitation','activation')
+        drawnow;
     end
 
 end
@@ -356,11 +429,60 @@ function [xdot, dxdot_dx, dxdot_du] = odefun(x,u)
     Tdeact = problem.Tdeact;
 
     % activation dynamics model from McLean et al., J Biomech Eng 2003
-    xdot = (u/Tact + (1-u)/Tdeact) .* (u - x);
+    if strcmp(problem.model, 'McLean2003')
+        xdot = (u/Tact + (1-u)/Tdeact) .* (u - x);
+    elseif strcmp(problem.model, 'McLean2003improved')
+        % improved version (see activation-dynamics-report.pdf)
+        b = 100;
+        z = b*(u-x);
+        f = 0.5 + 0.5*(z./sqrt(1+z.^2));  % this does not saturate as quickly as tanh and should work better for optimal control
+        % rate constant is a weighted average of activation and deactivation rates
+        R = f*(1/Tact) + (1-f)*(1/Tdeact);
+        xdot = R .* (u - x);
+    elseif strcmp(problem.model, 'DeGroote2016')
+        b = 10;
+        z = b*(u-x);
+        f = 0.5*tanh(z);  
+        % then equation (2) from De Groote et al., 2016
+        xdot = ( 1/Tact./(0.5+1.5*x).*(f+0.5) + (0.5+1.5*x)./Tdeact.*(-f+0.5) ) .* (u-x);
+    end
 
+    % compute derivatives, if requested
     if (nargout > 1)
-        dxdot_dx = -(u/Tact + (1-u)/Tdeact);
-        dxdot_du = (1/Tact - 1/Tdeact).*(u-x) + (u/Tact + (1-u)/Tdeact);
+        if strcmp(problem.model, 'McLean2003')
+            dxdot_dx = -(u/Tact + (1-u)/Tdeact);
+            dxdot_du = (1/Tact - 1/Tdeact).*(u-x) + (u/Tact + (1-u)/Tdeact);
+        elseif strcmp(problem.model, 'McLean2003improved')
+            % improved version
+            dz_dx = -b;
+            dz_du = b;
+            df_dz = 1./(2*(z.^2 + 1).^(1/2)) - z.^2./(2*(z.^2 + 1).^(3/2));
+            df_dx = df_dz .* dz_dx;  % chain rule
+            df_du = df_dz .* dz_du;  % chain rule
+            dR_df = (1/Tact) - (1/Tdeact);
+            dR_dx = dR_df .* df_dx;  % chain rule
+            dR_du = dR_df .* df_du;  % chain rule
+            dxdot_dx = dR_dx .* (u-x) - R;  % product rule
+            dxdot_du = dR_du .* (u-x) + R;  % product rule
+        elseif strcmp(problem.model, 'DeGroote2016')
+            % z = b*(u-x);
+            dz_dx = -b;
+            dz_du = b;
+            % f = 0.5*tanh(z);  
+            df_dz = 1/2 - tanh(z)^2/2;
+            df_dx = df_dz * dz_dx;
+            df_du = df_dz * dz_du;
+            y = 0.5+1.5*x;
+            dy_dx = 1.5;
+            R = 1/Tact/y*(f+0.5) + y/Tdeact*(-f+0.5);
+            dR_dy = -1/Tact./y.^2*(f+0.5) + 1./Tdeact.*(-f+0.5);
+            dR_df = 1/Tact./y - y/Tdeact;
+            dR_dx = dR_dy .* dy_dx + dR_df .* df_dx;
+            dR_du = dR_df .* df_du;
+            % xdot = R .* (u-x);
+            dxdot_dx = dR_dx .* (u-x) - R;
+            dxdot_du = dR_du .* (u-x) + R;
+        end
     end
 end
 
