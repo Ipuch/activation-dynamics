@@ -99,6 +99,16 @@ function [adot] = actdyn(t,a)
     if strcmp(problem.model, 'McLean2003')
         % activation dynamics model from McLean et al., J Biomech Eng 2003
         adot = (u/Tact + (1-u)/Tdeact) .* (u - a);
+    elseif strcmp(problem.model, 'McLean2003Improved')
+        % activation dynamics model from McLean et al., J Biomech Eng 2003
+        % improved such that activation rate depends on (u-a), and
+        % does not generate unstable dynamics when u>1
+        % f(u-a) is a sigmoid function between 0 and 1
+        x = 10*(u-a);
+        f = 0.5 + 0.5*(x./sqrt(1+x.^2));  % this does not saturate as quickly as tanh and should work better for optimal control
+        % the time constant will be a weighted average of Tact and Tdeact
+        T = f*Tact + (1-f)*Tdeact;
+        adot = (u - a) ./ T;
     elseif strcmp(problem.model, 'DeGroote2016Original')
         % equation (1) from De Groote et al 2016, original version as published
         b = 0.1;

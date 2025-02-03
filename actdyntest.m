@@ -7,7 +7,7 @@ function actdyntest()
     % define the models to test
     % 'McLean2003' is McLean SG et al., J Biomech Eng 2003, eq. (3)
     % 'DeGroote2016' is De Groote F et al., Ann Biomed Eng 2016, eq. (1-2)
-    models = {'McLean2003' 'DeGroote2016Original' 'DeGroote2016'};
+    models = {'McLean2003' 'McLean2003Improved' 'DeGroote2016Original' 'DeGroote2016'};
     problem.Tact = 0.015;
     problem.Tdeact = 0.060;
     umax = 1.0;
