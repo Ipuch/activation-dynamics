@@ -126,7 +126,6 @@ function optimize()
     period = 1/f;
     dutycycle = 0.2; % this duty cycle will produce a mean activation of exactly 0.5 with the McLean2003 model
     name = sprintf('%.0f Hz control input, %.3f duty cycle', f, dutycycle);
-    fprintf('doing simulation with %s...\n', name);
 
     % simulate for about 1 second, long enough that there is no effect of initial conditions
     duration = 1.0;
@@ -196,6 +195,7 @@ function optimize()
 end
 %=================================================================
 function [f,g] = obj_fmincon(X)
+% objective function for fmincon optimizer
     f = objfun(X);
     if (nargout > 1)
         g = objgrad(X);
@@ -211,6 +211,7 @@ function f = objfun(X)
 end
 %==================================================================
 function g = objgrad(X)
+% gradient df/dX of objfun
     global problem
 
     % and the gradient:
@@ -221,6 +222,7 @@ function g = objgrad(X)
 end
 %=================================================================
 function [c,ceq,Gc,Gceq] = con_fmincon(X)
+% constraints for the fmincon optimizer
     % no inequality constraints
     c = [];
     Gc = [];
@@ -298,8 +300,8 @@ function J = conjac(X)
         u2 = X(iu2);
         if strcmp(problem.method,'trapezoidal')
             % trapezoidal formula: (x2-x1)/h = 0.5*( f(x1,u1) + f(x2,u2) )
-            [f1,df1dx1,df1du1] = odefun(x1,u1);
-            [f2,df2dx2,df2du2] = odefun(x2,u2);
+            [~,df1dx1,df1du1] = odefun(x1,u1);
+            [~,df2dx2,df2du2] = odefun(x2,u2);
             % c(ic) = (x2-x1)/h - 0.5*(f1+f2);
             J(ic,ix1) = -1.0/h - 0.5*df1dx1;
             J(ic,ix2) =  1.0/h - 0.5*df2dx2;
@@ -307,7 +309,7 @@ function J = conjac(X)
             J(ic,iu2) = -0.5*df2du2;
         else
             % backward Euler formula: (x2-x1)/h = f(x2,u2)
-            [f2,df2dx2,df2du2] = odefun(x2,u2);
+            [~,df2dx2,df2du2] = odefun(x2,u2);
             % c(ic) = (x2-x1)/h - f2;
             J(ic,ix1) = -1.0/h;
             J(ic,ix2) = 1.0/h - df2dx2;
@@ -322,10 +324,10 @@ function J = conjac(X)
     end
 
     % two constraints for periodicity: x(T)-x(0)=0 and u(T)-u(0)=0
-    x0 = X(problem.ix(1));
-    xT = X(problem.ix(end));
-    u0 = X(problem.iu(1));
-    uT = X(problem.iu(end));
+    % x0 = X(problem.ix(1));
+    % xT = X(problem.ix(end));
+    % u0 = X(problem.iu(1));
+    % uT = X(problem.iu(end));
     % c(ic)   = xT-x0;
     % c(ic+1) = uT-u0;
     J(ic,   problem.ix(1))   = -1.0;
@@ -346,7 +348,7 @@ function J = conjacStructure()
 end
 %===================================================================
 function [xdot, dxdot_dx, dxdot_du] = odefun(x,u)
-% ODE function with control input u
+% ODE function for activation state x with control input u
 % also returns the derivatives, if requested
     global problem
 
