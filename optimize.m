@@ -433,7 +433,7 @@ function [xdot, dxdot_dx, dxdot_du] = odefun(x,u)
         xdot = (u/Tact + (1-u)/Tdeact) .* (u - x);
     elseif strcmp(problem.model, 'McLean2003improved')
         % improved version (see activation-dynamics-report.pdf)
-        b = 100;
+        b = 10;
         z = b*(u-x);
         f = 0.5 + 0.5*(z./sqrt(1+z.^2));  % this does not saturate as quickly as tanh and should work better for optimal control
         % rate constant is a weighted average of activation and deactivation rates
