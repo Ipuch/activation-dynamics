@@ -5,3 +5,5 @@ Matlab code to show the effect of activation dynamics on musculoskeletal optimal
 First, read activation_dynamics_report.pdf.
 
 (end)
+
+Adapted to bioptim
